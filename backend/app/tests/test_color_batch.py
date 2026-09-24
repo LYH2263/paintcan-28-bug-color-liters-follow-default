@@ -114,6 +114,46 @@ class EstimatePinningTests(unittest.TestCase):
         self.assertEqual(newer["color_batch"], "BL-999")
         self.assertEqual(fresh["color_batch"], "BL-999")
 
+    def test_changing_coverage_keeps_old_run_pinned_everywhere(self):
+        import json
+        with PaintService() as s:
+            old = s.estimate(1, True, color_batch_code="PB-2000")
+            old_id = old["run_id"]
+            self.assertEqual(old["liters"], 11.6)  # 46.41 * 2 / 8
+            # 现行系统默认涂布率变为 10（按此当场重算会得到 9.28 升）
+            conn = db.connect()
+            conn.execute("UPDATE settings SET value='10' WHERE key='coverage'")
+            conn.commit()
+            conn.close()
+            detail_a = s.run_detail(old_id)
+            detail_b = s.run_detail(old_id)  # 重复只读打开
+            hist = next(h for h in s.history() if h["id"] == old_id)
+        # 详情：色号文字与升数/涂布率都保持写入时钉选
+        self.assertEqual(detail_a["color_batch"], "PB-2000")
+        self.assertEqual(detail_a["liters"], 11.6)
+        self.assertEqual(detail_a["coverage"], 8.0)
+        self.assertEqual(detail_a["coats"], 2)
+        self.assertEqual(detail_a["net_m2"], 46.41)
+        # 多次打开、列表摘要与详情完全一致
+        self.assertEqual(detail_b, detail_a)
+        self.assertEqual(hist["color_batch"], detail_a["color_batch"])
+        self.assertEqual(hist["liters"], detail_a["liters"])
+        self.assertEqual(hist["coverage"], detail_a["coverage"])
+        # 只读打开不得改写库里钉选的色号与升数
+        row = db.connect().execute(
+            "SELECT input_json,result_json FROM calc_runs WHERE id=?", (old_id,)).fetchone()
+        pinned = json.loads(row["input_json"])
+        self.assertEqual(pinned["color_batch"], "PB-2000")
+        self.assertEqual(pinned["liters"], 11.6)
+        self.assertEqual(pinned["coverage"], 8.0)
+        self.assertEqual(json.loads(row["result_json"])["liters"], 11.6)
+        # 当场新测才走现行默认涂布率
+        with PaintService() as s:
+            fresh = s.estimate(1, True)
+        self.assertEqual(fresh["color_batch"], color_batch.DEFAULT_COLOR_BATCH)
+        self.assertEqual(fresh["coverage"], 10.0)
+        self.assertEqual(fresh["liters"], 9.28)
+
     def test_blank_default_rejected(self):
         with PaintService() as s:
             with self.assertRaises(ColorBatchRejected):

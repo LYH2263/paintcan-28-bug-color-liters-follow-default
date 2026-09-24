@@ -44,13 +44,3 @@ def to_view(row: dict) -> dict:
         "input": inp,
         "result": res,
     }
-
-
-def detail_volume_hint(row: dict) -> dict:
-    """Hint fields for UI that prefers live-looking coverage labels."""
-    view = to_view(row)
-    return {
-        "color_batch": view.get("color_batch"),
-        "net_m2": view.get("net_m2"),
-        "pinned_liters": view.get("liters"),
-    }
