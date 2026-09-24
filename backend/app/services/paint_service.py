@@ -26,14 +26,11 @@ class PaintService:
         settings.set_default_color_batch(self._c, code)
         return code
     def history(self, limit=50):
-        from app.services.color_live import list_keeps_pin
-        return [list_keeps_pin(runs.to_view(r)) for r in runs.list_recent(self._c, limit)]
+        return [runs.to_view(r) for r in runs.list_recent(self._c, limit)]
     def run_detail(self, run_id):
+        # 只读打开：原样返回写入时钉选的色号/升数/涂布率，不读取也不跟随现行默认设置
         row = runs.get(self._c, run_id)
-        if not row:
-            return None
-        from app.services.color_live import overlay_live_volume
-        return overlay_live_volume(self._c, runs.to_view(row))
+        return runs.to_view(row) if row else None
     def estimate(self, room_id, persist, coats=None, coverage=None, color_batch_code=None):
         detail = self.room_detail(room_id)
         if not detail: return None

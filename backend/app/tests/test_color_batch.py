@@ -119,6 +119,56 @@ class EstimatePinningTests(unittest.TestCase):
             with self.assertRaises(ColorBatchRejected):
                 s.update_default_color_batch("  ")
 
+    def _set_coverage_coats(self, coverage, coats):
+        conn = db.connect()
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES ('coverage',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(coverage),))
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES ('coats',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(coats),))
+        conn.commit()
+        conn.close()
+
+    def test_detail_and_list_keep_pin_after_coverage_changes(self):
+        with PaintService() as s:
+            old = s.estimate(1, True, color_batch_code="PB-2000")
+            old_id = old["run_id"]
+            # 现行默认涂布率/遍数改变：当场新测走现行值
+            self._set_coverage_coats(10, 3)
+            live = s.estimate(1, False, color_batch_code="PB-2000")
+            self.assertEqual(live["coverage"], 10.0)
+            self.assertEqual(live["coats"], 3)
+            self.assertEqual(live["liters"], round(46.41 * 3 / 10, 2))
+            # 历史旧记录：详情与列表摘要都必须仍是写入时钉选值
+            detail = s.run_detail(old_id)
+            [listed] = [h for h in s.history() if h["id"] == old_id]
+        for v in (detail, listed):
+            self.assertEqual(v["color_batch"], "PB-2000")
+            self.assertEqual(v["liters"], 11.6)
+            self.assertEqual(v["net_m2"], 46.41)
+            self.assertEqual(v["coverage"], 8.0)
+            self.assertEqual(v["coats"], 2)
+        # 同一条记录：列表摘要与详情逐字段一致
+        for k in ("color_batch", "liters", "net_m2", "coverage", "coats"):
+            self.assertEqual(detail[k], listed[k], f"字段 {k} 列表与详情不一致")
+
+    def test_read_only_detail_does_not_rewrite_pinned_row(self):
+        with PaintService() as s:
+            old = s.estimate(1, True, color_batch_code="RED-01")
+            old_id = old["run_id"]
+        before = self._count_runs()
+        raw_before = db.connect().execute(
+            "SELECT input_json, result_json FROM calc_runs WHERE id=?", (old_id,)).fetchone()
+        with PaintService() as s:
+            s.run_detail(old_id)
+            s.run_detail(old_id)
+        raw_after = db.connect().execute(
+            "SELECT input_json, result_json FROM calc_runs WHERE id=?", (old_id,)).fetchone()
+        self.assertEqual(self._count_runs(), before)
+        self.assertEqual(raw_after["input_json"], raw_before["input_json"])
+        self.assertEqual(raw_after["result_json"], raw_before["result_json"])
+
 
 if __name__ == "__main__":
     unittest.main()
